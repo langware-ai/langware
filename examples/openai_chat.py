@@ -84,6 +84,7 @@ Current date: {datetime.now().strftime('%Y-%m-%d')}""")
     input_mock = [
         "Hi!",
         "Calculate sin(1/3) and integral of 2*x + y for x from 1 to 3",
+        "dump_agent"
     ]
 
     # Overriding default OpenAIChatModule with OpenAIChatRetryModule in order to retry failed API calls.
@@ -102,7 +103,7 @@ Current date: {datetime.now().strftime('%Y-%m-%d')}""")
         if user_content == "help":
             print("Commands:\n"
                   "  help  - show this help\n"
-                  "  exit  - exit"
+                  "  exit  - exit\n"
                   "  reset - reset prompt\n"
                   "  dump  - dump prompt\n"
                   "  dump_agent - dump last agent's chat prompt\n"
