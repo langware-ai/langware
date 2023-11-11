@@ -1,9 +1,11 @@
-from typing import Literal, Optional
+from typing import Literal
+from typing import Optional
 
-from pydantic import BaseModel, model_validator, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict
+from pydantic import model_validator
 
 
-class OpenAIChatFunctionCall(BaseModel):
+class OpenAIFunctionCall(BaseModel):
     """Received function call from assistant."""
     name: str = Field(...)
     arguments: str = Field(...)
@@ -18,7 +20,7 @@ class OpenAIChatMessage(BaseModel):
     role: Literal["system", "user", "assistant", "function"] = Field(...)
     name: Optional[str] = Field(None, pattern=r'^[a-zA-Z0-9_-]{1,64}$')
     content: Optional[str] = Field(...)
-    function_call: Optional[OpenAIChatFunctionCall] = Field(None)
+    function_call: Optional[OpenAIFunctionCall] = Field(None)
 
     @model_validator(mode='before')
     @classmethod

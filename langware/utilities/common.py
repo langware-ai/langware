@@ -6,7 +6,7 @@ from typing import AsyncGenerator, AsyncIterator, Dict, Iterator, Generator, Uni
 
 
 # Used as a default value for dict.get() to distinguish missing key, as an alternative to None.
-MAPPING_DEFAULT = object()
+sentinel = object()
 
 
 def _dict_filter_some(**kwargs: Any) -> dict[Any, Any]:

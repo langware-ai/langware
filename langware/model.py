@@ -8,16 +8,17 @@ from dataclasses import dataclass
 from typing import Any, Sequence, Optional, Dict, Union, Iterable, Awaitable
 
 import aiohttp
+from aiohttp import ServerTimeoutError, ClientConnectorError, ServerConnectionError, ClientError
 from pydantic import BaseModel, Field, field_validator, RootModel, SecretStr, ConfigDict
 
-from promptchain.logger import logger
-from promptchain.prompt import OpenAIChatMessage
-from promptchain.tool import OpenAIChatFunction
+from langware.logger import logger
+from langware.prompt import OpenAIChatMessage
+from langware.function import OpenAIChatAPIFunction
 
-from promptchain.utilities.common import collect, parse_sse, clamp
+from langware.utilities.common import collect, parse_sse, clamp
 
 
-class Module(BaseModel):
+class Model(BaseModel):
     """
     Module is an entity that interacts with the neural networks via their API using aiohttp,
     or subprocess using asyncio (llama.cpp), or Torch model using PyTorch.
@@ -39,7 +40,11 @@ class Module(BaseModel):
         pass
 
 
-class OpenAIChatModule(Module):
+class TryAgain(Exception):
+    code: int
+
+
+class OpenAIChatAPIModel(Model):
     """
     A module that uses OpenAI Chat Completions API.
     See [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat) for available parameters.
@@ -68,22 +73,22 @@ class OpenAIChatModule(Module):
             self,
             session: aiohttp.ClientSession,
             messages: Iterable[OpenAIChatMessage],
-            functions: Optional[Iterable[OpenAIChatFunction]] = None,
+            openai_functions: Optional[Iterable[OpenAIChatAPIFunction]] = None,
             params: Optional[Dict[str, Any]] = None,
             aiohttp_params: Optional[Dict[str, Any]] = None
     ) -> Awaitable[OpenAIChatMessage]:
-        return self.acall(session, messages, functions, params, aiohttp_params)
+        return self.acall(session, messages, openai_functions, params, aiohttp_params)
 
     async def acall(
             self,
             session: aiohttp.ClientSession,
             messages: Iterable[OpenAIChatMessage],
-            functions: Optional[Iterable[OpenAIChatFunction]] = None,
+            openai_functions: Optional[Iterable[OpenAIChatAPIFunction]] = None,
             params: Optional[Dict[str, Any]] = None,
             aiohttp_params: Optional[Dict[str, Any]] = None
     ) -> OpenAIChatMessage:
         data_messages = RootModel(messages).model_dump(exclude_defaults=True)
-        data_functions = RootModel(functions).model_dump(exclude_defaults=True) if functions else None
+        data_functions = RootModel(openai_functions).model_dump(exclude_defaults=True) if openai_functions else None
 
         method = "POST"
         url = "https://api.openai.com/v1/chat/completions"
@@ -104,7 +109,10 @@ class OpenAIChatModule(Module):
             logger.debug(f"Request {request_id:06d}: Response: {repr(response)}")
 
             if response.status != 200:
-                raise Exception(f"Request failed with status {response.status}: {response.reason}")
+                err = f"Request failed with status {response.status} ({response.reason}). Response: {await response.text()}"
+                if response.status in (429, 500, 503) or response.status in (502, ):
+                    raise TryAgain(err)
+                raise Exception(err)
 
             if stream:
                 async for event in parse_sse(response.content.iter_any()):
@@ -112,7 +120,7 @@ class OpenAIChatModule(Module):
                         break
                     completion = json.loads(event[b'data'])
                     if "error" in completion:
-                        raise Exception(f"ChatAPI error: {completion['error']}")
+                        raise Exception(f"OpenAI error: {completion['error']}")
                     choice = completion["choices"][0]
                     message = collect(message, choice["delta"])
             else:
@@ -124,7 +132,7 @@ class OpenAIChatModule(Module):
         return prediction
 
 
-class OpenAIChatRetryModule(OpenAIChatModule):
+class OpenAIChatAPIRetryModel(OpenAIChatAPIModel):
     """
     Same as [`OpenAIChatModule`](promptchain.module.OpenAIChatModule), but retries the request when it fails.
     With default parameters, wait schema is the following (in seconds):
@@ -136,17 +144,31 @@ class OpenAIChatRetryModule(OpenAIChatModule):
     min_wait: float = 1
     max_wait: float = 64
 
-    def __call__(self, *args, **kwargs):
-        return self.acall(*args, **kwargs)
+    def __call__(
+            self,
+            session: aiohttp.ClientSession,
+            messages: Iterable[OpenAIChatMessage],
+            openai_functions: Optional[Iterable[OpenAIChatAPIFunction]] = None,
+            params: Optional[Dict[str, Any]] = None,
+            aiohttp_params: Optional[Dict[str, Any]] = None
+    ) -> Awaitable[OpenAIChatMessage]:
+        return self.acall(session, messages, openai_functions, params, aiohttp_params)
 
-    async def acall(self, *args, **kwargs):
+    async def acall(
+            self,
+            session: aiohttp.ClientSession,
+            messages: Iterable[OpenAIChatMessage],
+            openai_functions: Optional[Iterable[OpenAIChatAPIFunction]] = None,
+            params: Optional[Dict[str, Any]] = None,
+            aiohttp_params: Optional[Dict[str, Any]] = None
+    ) -> OpenAIChatMessage:
         retries = 0
         while retries < self.max_retries:
             try:
-                return await super().acall(*args, **kwargs)
-            except Exception as e:
+                return await super().acall(session, messages, openai_functions, params, aiohttp_params)
+            except (TryAgain, ClientError) as e:
                 wait_time = clamp(self.min_wait, self.backoff_factor * (self.base ** retries), self.max_wait)
-                logger.warning(f"Request failed with error: {e}, retries: {retries}, max_retries: {self.max_retries}, wait_time: {wait_time}")
+                logger.warning(f"Request failed with error: {e!r}, retries: {retries}, max_retries: {self.max_retries}, wait_time: {wait_time}")
                 if retries >= self.max_retries:
                     raise e
                 await asyncio.sleep(wait_time)

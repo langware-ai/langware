@@ -1,14 +1,14 @@
-# promptchain
+# Langware
  
 Lightweight, powerful and hassle-free Langchain alternative.
 
 Currently, supports OpenAI Chat Completions API.
-Planning to add llama.cpp with GBNF-guided sampling, then PyTorch support.
+Planning to add OpenAI Assistants API, llama.cpp with GBNF-guided sampling, then PyTorch support.
 
 ## Installation
 
 ```shell
-pip install git+https://github.com/Company-420/promptchain.git@main
+pip install git+https://github.com/langware-ai/langware.git@main
 ```
 
 ## Usage
